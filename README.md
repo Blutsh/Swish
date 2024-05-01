@@ -1,0 +1,2 @@
+# Swish
+CLI for Swisstransfer
