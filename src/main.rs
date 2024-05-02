@@ -8,6 +8,7 @@ use clap::Parser;
 use errors::SwishError;
 use regex::Regex;
 use simple_logger::SimpleLogger;
+use api::{download, upload};
 
 #[derive(clap::Parser)]
 #[command(version, about, long_about = None)]
@@ -48,11 +49,10 @@ fn main() -> Result<(), SwishError> {
     let cli = Cli::parse();
     let arg = cli.file;
 
-    let mut api = api::Api::new();
 
     //check if the arg is a link
     if(is_swisstransfer_link(&arg)){
-        match &api.download(&arg, cli.password.as_deref()) {
+        match download(&arg, cli.password.as_deref()) {
             Ok(_) => (),
             Err(e) => {
                 eprintln!("{}", e);
@@ -93,7 +93,7 @@ fn main() -> Result<(), SwishError> {
 
         let local_files = localfiles::Localfiles::new(&arg, params);
 
-        api.upload(&local_files).unwrap();
+        upload(&local_files).unwrap();
         return Ok(())
     }
 
