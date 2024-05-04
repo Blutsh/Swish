@@ -52,7 +52,7 @@ fn main() -> Result<(), SwishError> {
 
     //check if the arg is a link
     if(is_swisstransfer_link(&arg)){
-        match download(&arg, cli.password.as_deref()) {
+        match download(&arg, cli.password.as_deref(), None) {
             Ok(_) => (),
             Err(e) => {
                 eprintln!("{}", e);
@@ -93,7 +93,7 @@ fn main() -> Result<(), SwishError> {
 
         let local_files = localfiles::Localfiles::new(&arg, params);
 
-        upload(&local_files).unwrap();
+        println!("{}", upload(&local_files).unwrap());
         return Ok(())
     }
 
