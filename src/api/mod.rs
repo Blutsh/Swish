@@ -1,4 +1,4 @@
-use curl::easy::{self, Easy2};
+use curl::easy::Easy2;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -8,7 +8,7 @@ pub mod chunks;
 pub mod handlers;
 use crate::api::chunks::build_chunks_array;
 use crate::localfiles::Localfiles;
-use crate::swissfiles::{swissfile, Swissfiles};
+use crate::swissfiles::{Swissfiles};
 use crate::{errors::SwishError, localfiles};
 use base64;
 use curl::easy::List;
@@ -17,7 +17,7 @@ use handlers::DownloadHandler;
 use handlers::UploadHandler;
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
-use serde_json::{de, json};
+use serde_json::json;
 
 const SWISSTRANSFER_API: &str = "https://www.swisstransfer.com/api";
 const DEFAULT_HEADERS: &[&str; 3] = &[
@@ -61,7 +61,7 @@ fn new_easy2_data(
     Ok(easy2)
 }
 
-fn new_easy2_download(
+pub fn new_easy2_download(
     url: String,
     custom_headers: Option<Vec<String>>,
     file: File,
@@ -98,7 +98,6 @@ fn new_easy2_download(
 
     Ok(easy2)
 }
-
 
 fn new_easy2_upload(
     url: String,
@@ -143,11 +142,11 @@ fn new_easy2_upload(
     Ok(easy2)
 }
 
-
-fn get(url: &str, additional_headers: Option<Vec<String>>) -> Result<String, SwishError> {
+pub fn get(url: &str, additional_headers: Option<Vec<String>>) -> Result<String, SwishError> {
+    let additional_headers2 = additional_headers.clone();
     let mut easy2 = new_easy2_data(url.to_string(), additional_headers, false)?;
 
-    log::debug!("Sending get request to: {}", url);
+    log::debug!("Sending get request to: {} \n with headers {}", url, additional_headers2.unwrap_or_default().join("\n"));
 
     easy2.perform()?;
 
@@ -172,7 +171,7 @@ fn get(url: &str, additional_headers: Option<Vec<String>>) -> Result<String, Swi
     }
 }
 
-fn post(
+pub fn post(
     url: &str,
     body: Vec<u8>,
     additional_headers: Option<Vec<String>>,
@@ -202,85 +201,6 @@ fn post(
     }
 }
 
-pub fn download(swisstransfer_link: &str, password: Option<&str>, dest_path: Option<&str>) -> Result<(), SwishError> {
-    let download_id = swisstransfer_link.split("/").last().unwrap();
-    let url = format!("{}/links/{}", SWISSTRANSFER_API, download_id);
-
-    let auth_header: Option<Vec<String>> = match password {
-        Some(password) => {
-            log::debug!("Password has been provided. Adding authorization header.");
-
-            // Encode password to base64
-            let password = base64::encode(password);
-
-            // Add authorization header
-            let header = "Authorization: ".to_string() + &password;
-            Some(vec![header])
-        }
-        None => None,
-    };
-
-    let response = get(&url, auth_header)?;
-    let response: serde_json::Value = serde_json::from_str(&response)?;
-
-    let message = response["data"]["message"].as_str();
-
-    match message {
-        Some("Transfer need a password") => return Err(SwishError::PasswordRequired),
-        Some("The password is wrong") => return Err(SwishError::InvalidPassword),
-        _ => (),
-    }
-
-    log::debug!("Response after authorization: {:?}", response);
-
-    let swissfiles = Swissfiles::new(&response);
-
-    for swissfile in swissfiles.files {
-        let file_name = match dest_path {
-            Some(path) => {
-                // If destination path is provided, use it
-                let path = Path::new(path);
-                path.join(&swissfile.name).to_string_lossy().into_owned()
-            }
-            None => swissfile.name.clone(), // Otherwise, use original file name
-        };
-
-        let mut file = std::fs::File::create(&file_name)?;
-
-        let mut easy2 = new_easy2_download(
-            build_download_url(
-                &swissfile,
-                swissfiles.need_password,
-                &swissfiles.container_uuid,
-                password,
-            ),
-            None,
-            file,
-        )?;
-
-        easy2.perform()?;
-    }
-    Ok(())
-}
-
-
-fn build_download_url(
-    swissfile: &swissfile::Swissfile,
-    need_password: bool,
-    container_uuid: &str,
-    password: Option<&str>,
-) -> String {
-    let mut url = swissfile.url.clone();
-
-    if need_password {
-        let token = generate_download_token(password.unwrap(), container_uuid).unwrap();
-        let token: String =
-            serde_json::from_str(token.as_str()).unwrap_or_else(|_| token.to_string());
-        url = format!("{}?token={}", swissfile.url, token);
-    }
-
-    url
-}
 
 pub fn upload(files: &localfiles::Localfiles) -> Result<String, SwishError> {
     let total_size: usize = files.files.iter().map(|file| file.size as usize).sum();
@@ -324,7 +244,6 @@ pub fn upload(files: &localfiles::Localfiles) -> Result<String, SwishError> {
             easy2.perform()?;
         }
     }
-
 
     // Send a final request to the uploadComplete endpoint
     let url = format!("{}/uploadComplete", SWISSTRANSFER_API);
@@ -389,29 +308,4 @@ fn create_download_link(response: &Vec<u8>) -> Result<String, SwishError> {
 
     Ok(link)
 }
-fn generate_download_token(password: &str, container_uuid: &str) -> Result<String, SwishError> {
-    //At this point we already sent the password trough the headers
-    // but we need to gen a token by posting to /api/generateDownloadToken
-    // with the following payload:
-    //{"password":"123123","containerUUID":"c8deff85-e7ad-4df7-8c45-0f48542af26b","fileUUID":"f3d1b103-6d10-404c-b636-826cf6fe788e"}
-    let url = format!(
-        "{}/generateDownloadToken",
-        SWISSTRANSFER_API
-    );
-    let payload = json!({
-        "password": password,
-        "containerUUID": container_uuid,
-        "fileUUID": serde_json::Value::Null
-    });
 
-    let response = post(url.as_str(), payload.to_string().into_bytes(), None)?;
-    let response: String = String::from_utf8(response).unwrap();
-
-    log::debug!("Response: {:?}", response);
-
-    return Ok(response);
-
-    //here we got the token
-}
-
-//test
