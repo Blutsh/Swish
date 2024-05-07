@@ -1,14 +1,11 @@
 mod api;
 mod errors;
-mod localfiles;
 mod swissfiles;
 use std::path::PathBuf;
 
 use clap::Parser;
 use errors::SwishError;
 use regex::Regex;
-use simple_logger::SimpleLogger;
-use api::{upload};
 
 #[derive(clap::Parser)]
 #[command(version, about, long_about = None)]
@@ -49,21 +46,19 @@ fn main() -> Result<(), SwishError> {
     let cli = Cli::parse();
     let arg = cli.file;
 
-
     //check if the arg is a link
     if is_swisstransfer_link(&arg) {
-
         //Construct the swissfiles from the link
-        let swissfiles = swissfiles::Swissfiles::new(&arg, cli.password.as_deref())?;
+        let swissfiles = swissfiles::Swissfiles::new_remotefiles(&arg, cli.password.as_deref())?;
 
         //Download the files
         swissfiles.download(None)?;
 
-        return Ok(())
+        return Ok(());
     }
 
     if path_exists(&arg) {
-        let mut params = localfiles::parameters::Parameters::default();
+        let mut params = swissfiles::uploadparameters::UploadParameters::default();
 
         if let Some(password) = cli.password {
             params.password = password;
@@ -92,10 +87,10 @@ fn main() -> Result<(), SwishError> {
             params.duration = duration.parse().unwrap();
         }
 
-        let local_files = localfiles::Localfiles::new(&arg, params);
+        let local_files = swissfiles::Swissfiles::new_localfiles(&arg, &params)?;
+        local_files.upload()?;
 
-        println!("{}", upload(&local_files).unwrap());
-        return Ok(())
+        return Ok(());
     }
 
     Err(SwishError::InvalidUrl { url: arg })
@@ -112,7 +107,7 @@ fn is_swisstransfer_link(link: &str) -> bool {
 }
 
 fn path_exists(path: &str) -> bool {
-   //str is a file or folder 
+    //str is a file or folder
     PathBuf::from(path).exists()
 }
 

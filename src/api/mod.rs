@@ -1,25 +1,16 @@
 use curl::easy::Easy2;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::vec;
 pub mod chunks;
 pub mod handlers;
-use crate::api::chunks::build_chunks_array;
-use crate::localfiles::Localfiles;
-use crate::swissfiles::{Swissfiles};
-use crate::{errors::SwishError, localfiles};
-use base64;
+use crate::errors::SwishError;
 use curl::easy::List;
 use handlers::DataHandler;
 use handlers::DownloadHandler;
 use handlers::UploadHandler;
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
-use serde_json::json;
 
-const SWISSTRANSFER_API: &str = "https://www.swisstransfer.com/api";
 const DEFAULT_HEADERS: &[&str; 3] = &[
     "User-Agent: swisstransfer-webext/1.0",
     "Cookie: webext=1",
@@ -99,7 +90,7 @@ pub fn new_easy2_download(
     Ok(easy2)
 }
 
-fn new_easy2_upload(
+pub fn new_easy2_upload(
     url: String,
     custom_headers: Option<Vec<String>>,
     upload_total_size: usize,
@@ -144,9 +135,13 @@ fn new_easy2_upload(
 
 pub fn get(url: &str, additional_headers: Option<Vec<String>>) -> Result<String, SwishError> {
     let additional_headers2 = additional_headers.clone();
-    let mut easy2 = new_easy2_data(url.to_string(), additional_headers, false)?;
+    let easy2 = new_easy2_data(url.to_string(), additional_headers, false)?;
 
-    log::debug!("Sending get request to: {} \n with headers {}", url, additional_headers2.unwrap_or_default().join("\n"));
+    log::debug!(
+        "Sending get request to: {} \n with headers {}",
+        url,
+        additional_headers2.unwrap_or_default().join("\n")
+    );
 
     easy2.perform()?;
 
@@ -200,112 +195,3 @@ pub fn post(
         }
     }
 }
-
-
-pub fn upload(files: &localfiles::Localfiles) -> Result<String, SwishError> {
-    let total_size: usize = files.files.iter().map(|file| file.size as usize).sum();
-    let container = get_container(files).unwrap();
-    let upload_host = container["uploadHost"].as_str().unwrap();
-    let container_uuid = container["container"]["UUID"].as_str().unwrap();
-    let files_uuid = container["filesUUID"][0].as_str().unwrap();
-
-    for file in &files.files {
-        let chunks = build_chunks_array(file.size as usize, 52428800);
-        let full_path = if files.path.ends_with(&file.name) {
-            files.path.clone()
-        } else {
-            format!("{}/{}", files.path, file.name)
-        };
-        let file = File::open(&full_path)?; // Make file mutable
-        let mut easy2 = new_easy2_upload("".to_string(), None, total_size, &file)?; // Pass a reference to file
-
-        // Iterate over a reference to chunks to avoid moving it
-        for chunk in &chunks {
-            let mut file = File::open(&full_path)?; // Make file mutable inside the loop
-            file.seek(SeekFrom::Start(chunk.offset as u64))?;
-            let mut buffer = vec![0; chunk.size];
-            file.read_exact(&mut buffer)?;
-
-            let upload_url = format!(
-                "https://{}/api/uploadChunk/{}/{}/{}/{}",
-                upload_host,
-                container_uuid,
-                files_uuid,
-                chunk.index,
-                if chunk.index == chunks.len() - 1 {
-                    "1"
-                } else {
-                    "0"
-                }
-            );
-            easy2.url(&upload_url)?;
-            easy2.post(true)?;
-            easy2.post_field_size(chunk.size as u64)?;
-            easy2.perform()?;
-        }
-    }
-
-    // Send a final request to the uploadComplete endpoint
-    let url = format!("{}/uploadComplete", SWISSTRANSFER_API);
-    let body = json!({
-        "UUID": container_uuid,
-        "lang": "en_GB"
-    })
-    .to_string()
-    .into_bytes();
-    let response = post(&url, body, None)?;
-
-    Ok(create_download_link(&response)?)
-}
-
-fn get_container(localfiles: &Localfiles) -> Result<serde_json::Value, SwishError> {
-    let url = format!("{}/containers", SWISSTRANSFER_API);
-
-    let files: Vec<_> = localfiles
-        .files
-        .iter()
-        .map(|file| {
-            json!({
-                "name": file.name,
-                "size": file.size
-            })
-        })
-        .collect();
-
-    let files_string = serde_json::to_string(&files).unwrap();
-
-    let payload = json!({
-    "duration": localfiles.parameters.duration,
-    "authorEmail": localfiles.parameters.author_email,
-    "password": localfiles.parameters.password,
-    "message": localfiles.parameters.message,
-    "sizeOfUpload": localfiles.files.iter().map(|file| file.size).sum::<u64>(),
-    "numberOfDownload": localfiles.parameters.number_of_download,
-    "numberOfFile": localfiles.files.len(),
-    "lang": localfiles.parameters.lang,
-    "recaptcha": "nope",
-    "files": files_string,
-    "recipientsEmails": "[]"
-        });
-
-    let payload_string = serde_json::to_string(&payload).unwrap();
-    let payload_bytes = payload_string.as_bytes();
-
-    let response = post(url.as_str(), payload_bytes.to_vec(), None)?;
-
-    Ok(serde_json::from_str(&String::from_utf8(response).unwrap()).unwrap())
-}
-
-fn create_download_link(response: &Vec<u8>) -> Result<String, SwishError> {
-    //convert u8 to json object
-    let response: serde_json::Value =
-        serde_json::from_str(&String::from_utf8(response.to_vec()).unwrap()).unwrap();
-
-    let link = format!(
-        "https://www.swisstransfer.com/d/{}",
-        response[0]["linkUUID"].as_str().unwrap()
-    );
-
-    Ok(link)
-}
-

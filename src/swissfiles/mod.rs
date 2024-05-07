@@ -1,17 +1,32 @@
-use std::{fmt, path::Path};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 mod swissfile;
-use crate::{api::get, errors::SwishError, swissfiles::swissfile::Swissfile};
+pub mod uploadparameters;
+use crate::{
+    api::{get, post},
+    errors::SwishError,
+    swissfiles::swissfile::{RemoteSwissfile, Swissfile},
+};
 use base64::prelude::*;
+use serde_json::json;
+
+use self::uploadparameters::UploadParameters;
 
 const SWISSTRANSFER_API: &str = "https://www.swisstransfer.com/api";
 
 pub struct Swissfiles {
     pub files: Vec<Swissfile>,
+    pub container_uuid: String,
 }
 
 impl Swissfiles {
-    pub fn new(swisstransfer_link: &str, password: Option<&str>) -> Result<Self, SwishError> {
+    pub fn new_remotefiles(
+        swisstransfer_link: &str,
+        password: Option<&str>,
+    ) -> Result<Self, SwishError> {
         log::debug!("Creating new swissfiles : {}", &swisstransfer_link);
 
         // We might verify link validity there idk
@@ -59,6 +74,7 @@ impl Swissfiles {
                     }
                 }
             }
+            //Everything went probably fine
             _ => (),
         }
 
@@ -79,18 +95,103 @@ impl Swissfiles {
         let mut files = Vec::new();
 
         for file in response["data"]["container"]["files"].as_array().unwrap() {
-            let swissfile = Swissfile::new(file, &download_base_url, &container_uuid, password);
+            // We should probably generate the download token here and pass it to the Swissfile constructor
+            let swissfile = Swissfile::Remote(RemoteSwissfile::new(
+                file,
+                &download_base_url,
+                &container_uuid,
+                password,
+            ));
             files.push(swissfile);
         }
 
-        Ok(Self { files })
+        let swissfiles = Swissfiles {
+            files,
+            container_uuid,
+        };
+
+        Ok(swissfiles)
     }
 
-    pub fn download(&self, path: Option<&Path>) -> Result<(), crate::errors::SwishError> {
+    pub fn new_localfiles(
+        path: &str,
+        upload_parameter: &UploadParameters,
+    ) -> Result<Self, SwishError> {
+        let path = PathBuf::from(path);
+
+        //Wow that sucks
+        let path_clone = path.clone();
+
+        let files = if path.is_dir() {
+            std::fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>()
+        } else {
+            vec![path]
+        };
+
+        //we need to get the container
+        let container = get_container(&path_clone.clone(), upload_parameter)?;
+
+        let mut swissfiles = Vec::new();
+
+        for file in files {
+            let swissfile = Swissfile::Local(swissfile::LocalSwissfile::new(file, &container));
+            swissfiles.push(swissfile);
+        }
+
+        Ok(Swissfiles {
+            files: swissfiles,
+            container_uuid: container["container"]["UUID"].as_str().unwrap().to_string(),
+        })
+    }
+
+    pub fn download(&self, custom_out_path: Option<&Path>) -> Result<(), SwishError> {
         for file in &self.files {
-            file.download(path)?;
+            match file {
+                Swissfile::Local(_) => {
+                    // Handle local file download
+                    unimplemented!("Humm, Why would you want to download a local file ?")
+                }
+                Swissfile::Remote(remote_swissfile) => {
+                    // Call download method on RemoteSwissfile
+                    remote_swissfile.download(custom_out_path)?;
+                }
+            }
         }
         Ok(())
+    }
+
+    pub fn upload(&self) -> Result<(), SwishError> {
+        for file in &self.files {
+            match file {
+                Swissfile::Local(local_swissfile) => {
+                    // Call upload method on LocalSwissfile
+                    local_swissfile.upload()?;
+                }
+                Swissfile::Remote(_) => {
+                    // Handle remote file upload
+                    unimplemented!("Humm, Why would you want to upload a remote file ?")
+                }
+            }
+        }
+
+        println!("Here is your download link {}", self.finalize_upload()?);
+        Ok(())
+    }
+
+    fn finalize_upload(&self) -> Result<String, SwishError> {
+        let url = format!("{}/uploadComplete", SWISSTRANSFER_API);
+        let body = json!({
+            "UUID": self.container_uuid,
+            "lang": "en_GB"
+        })
+        .to_string()
+        .into_bytes();
+        let response = post(&url, body, None)?;
+
+        Ok(create_download_link(&response)?)
     }
 }
 
@@ -101,4 +202,67 @@ impl fmt::Display for Swissfiles {
         }
         Ok(())
     }
+}
+
+fn get_container(
+    path: &PathBuf,
+    upload_parameter: &UploadParameters,
+) -> Result<serde_json::Value, SwishError> {
+    let url = format!("{}/containers", SWISSTRANSFER_API);
+
+    //check if the path is a file or a folder
+    let files = if path.is_dir() {
+        std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>()
+    } else {
+        vec![path.clone()]
+    };
+
+    let files: Vec<_> = files
+        .iter()
+        .map(|file| {
+            json!({
+                "name": file.file_name().unwrap().to_str().unwrap(),
+                "size": file.metadata().unwrap().len()
+            })
+        })
+        .collect();
+
+    let files_string = serde_json::to_string(&files).unwrap();
+
+    let payload = json!({
+    "duration": upload_parameter.duration,
+    "authorEmail": upload_parameter.author_email,
+    "password": upload_parameter.password,
+    "message": upload_parameter.message,
+    "sizeOfUpload": files.iter().map(|file| file["size"].as_u64().unwrap()).sum::<u64>(),
+    "numberOfDownload": upload_parameter.number_of_download,
+    "numberOfFile": files.len(),
+    "lang": upload_parameter.lang,
+    "recaptcha": "nope",
+    "files": files_string,
+    "recipientsEmails": "[]"
+        });
+
+    let payload_string = serde_json::to_string(&payload).unwrap();
+    let payload_bytes = payload_string.as_bytes();
+
+    let response = post(url.as_str(), payload_bytes.to_vec(), None)?;
+
+    Ok(serde_json::from_str(&String::from_utf8(response).unwrap()).unwrap())
+}
+
+pub fn create_download_link(response: &Vec<u8>) -> Result<String, SwishError> {
+    //convert u8 to json object
+    let response: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(response.to_vec()).unwrap()).unwrap();
+
+    let link = format!(
+        "https://www.swisstransfer.com/d/{}",
+        response[0]["linkUUID"].as_str().unwrap()
+    );
+
+    Ok(link)
 }

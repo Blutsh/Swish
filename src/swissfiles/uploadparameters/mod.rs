@@ -1,4 +1,4 @@
-pub struct Parameters {
+pub struct UploadParameters {
     pub duration: u64,
     pub author_email: String,
     pub password: String,
@@ -8,7 +8,7 @@ pub struct Parameters {
     pub recipients_emails: Vec<String>,
 }
 
-impl Default for Parameters {
+impl Default for UploadParameters {
     fn default() -> Self {
         Self {
             duration: 30,
