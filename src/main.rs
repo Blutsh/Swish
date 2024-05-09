@@ -1,7 +1,14 @@
+/// Hey there! 
+/// As you can see, Im a real noob in Rust and dev in general, so please be kind with me.
+/// I hope someone with no skill issues could refactor the wole code base and make it readable and maintainable.
+/// Sorry for the mess x) at least it seems to work for now \o/
+
 mod api;
 mod errors;
 mod swissfiles;
 use std::path::PathBuf;
+use swissfiles::uploadparameters::UploadParameters;
+use swissfiles::Swissfiles;
 
 use clap::Parser;
 use errors::SwishError;
@@ -17,21 +24,13 @@ struct Cli {
     #[arg(short, long, value_name = "password")]
     password: Option<String>,
 
-    /// Define the email recipients for the file(s) uploaded
-    #[arg(short, long, value_name = "john@doe.com, ...", value_parser = validate_email)]
-    recipients_email: Option<String>,
-
-    /// Define the email author for the file(s) uploaded
-    #[arg(short, long, value_name = "john@doe.com", value_parser = validate_email)]
-    author_email: Option<String>,
-
     /// Define the message for the file(s) uploaded
     #[arg(short, long, value_name = "Hello World")]
     message: Option<String>,
 
     /// Define the max number of downloads for the file(s) uploaded
     #[arg(short, long, value_name = "250", value_parser = validate_number_download)]
-    number_download: Option<PathBuf>,
+    number_download: Option<String>,
 
     /// Define the number of days the file(s) will be available for download
     #[arg(short, long, value_name = "30", value_parser = validate_duration)]
@@ -40,39 +39,30 @@ struct Cli {
 
 fn main() -> Result<(), SwishError> {
     simple_logger::SimpleLogger::new()
-        .with_level(log::LevelFilter::Debug)
+        .with_level(log::LevelFilter::Info)
         .init()
         .unwrap();
     let cli = Cli::parse();
     let arg = cli.file;
 
+
     //check if the arg is a link
     if is_swisstransfer_link(&arg) {
         //Construct the swissfiles from the link
-        let swissfiles = swissfiles::Swissfiles::new_remotefiles(&arg, cli.password.as_deref())?;
+        let swissfiles = Swissfiles::new_remotefiles(&arg, cli.password.as_deref())?;
 
         //Download the files
         swissfiles.download(None)?;
 
         return Ok(());
     }
-
+    //check if the arg is a path
     if path_exists(&arg) {
-        let mut params = swissfiles::uploadparameters::UploadParameters::default();
+        let path = PathBuf::from(&arg);
+        let mut params = UploadParameters::default();
 
         if let Some(password) = cli.password {
             params.password = password;
-        }
-
-        if let Some(recipients_email) = cli.recipients_email {
-            params.recipients_emails = recipients_email
-                .split(",")
-                .map(|email| email.to_string())
-                .collect();
-        }
-
-        if let Some(author_email) = cli.author_email {
-            params.author_email = author_email;
         }
 
         if let Some(message) = cli.message {
@@ -80,25 +70,21 @@ fn main() -> Result<(), SwishError> {
         }
 
         if let Some(number_download) = cli.number_download {
-            params.number_of_download = number_download.to_str().unwrap().parse().unwrap();
+            params.number_of_download = number_download.parse().unwrap();
         }
 
         if let Some(duration) = cli.duration {
             params.duration = duration.parse().unwrap();
         }
 
-        let local_files = swissfiles::Swissfiles::new_localfiles(&arg, &params)?;
-        local_files.upload()?;
+        let local_files = Swissfiles::new_localfiles(path, &params)?;
+        let download_link = local_files.upload()?;
+        println!("Download link: {}", download_link);
 
         return Ok(());
     }
 
     Err(SwishError::InvalidUrl { url: arg })
-}
-
-fn verify_link_format(link: &str) -> bool {
-    let re = Regex::new(r"^https://www\.swisstransfer\.com/d/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$").unwrap();
-    re.is_match(link)
 }
 
 fn is_swisstransfer_link(link: &str) -> bool {
@@ -111,34 +97,23 @@ fn path_exists(path: &str) -> bool {
     PathBuf::from(path).exists()
 }
 
-fn validate_email(val: &str) -> Result<(), String> {
-    let re = Regex::new(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$").unwrap();
-    val.split(',').map(str::trim).try_for_each(|email| {
-        if re.is_match(email) {
-            Ok(())
-        } else {
-            Err(format!("\"{}\" is not a valid email", email))
-        }
-    })
-}
-
-fn validate_number_download(val: &str) -> Result<(), String> {
-    let number = val.parse::<u32>().map_err(|_| "Must be a valid number")?;
+fn validate_number_download(val: &str) -> Result<String, String> {
+    let number = val.parse::<u16>().map_err(|_| "Must be a valid number")?;
     if number < 1 || number > 250 {
         Err(String::from(
             "Number of downloads must be between 1 and 250",
         ))
     } else {
-        Ok(())
+        Ok(val.to_string())
     }
 }
 
-fn validate_duration(val: &str) -> Result<(), String> {
+fn validate_duration(val: &str) -> Result<String, String> {
     let number = val.parse::<u32>().map_err(|_| "Must be a valid number")?;
-    if number < 1 || number > 30 {
-        Err(String::from("Duration must be between 1 and 30 days"))
+    if [1, 7, 15, 30].contains(&number) {
+        Ok(val.to_string())
     } else {
-        Ok(())
+        Err(String::from("Duration must be 1, 7, 15 or 30"))
     }
 }
 
@@ -147,30 +122,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_verify_link_format() {
-        assert_eq!(
-            verify_link_format(
-                "https://www.swisstransfer.com/d/3215702a-bed4-4cec-9eb6-d731048a2312"
-            ),
-            true
-        );
-        assert_eq!(
-            verify_link_format(
-                "https://www.swisstransfer.com/d/3215702a-bed4-4cec-9eb6-d731048a231"
-            ),
-            false
-        );
-        assert_eq!(
-            verify_link_format(
-                "https://www.swisstransfer.com/d/3215702a-bed4-4cec-9eb6-d731048a2312/"
-            ),
-            false
-        );
-        assert_eq!(
-            verify_link_format(
-                "https://www.swisstransfer.com/f/3215702a-bed4-4cec-9eb6-d731048a2312"
-            ),
-            false
-        );
+    fn test_is_swisstransfer_link() {
+        let link = "https://www.swisstransfer.com/d/8b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b";
+        assert_eq!(is_swisstransfer_link(link), true);
+        let link = "http://www.swisstransfer.com/d/8b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b/";
+        assert_eq!(is_swisstransfer_link(link), false);
+        let link = "https://www.swisstransfer.ch/d/8b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b/";
+        assert_eq!(is_swisstransfer_link(link), false);
+        let link = "www.swisstransfer.com/d/8b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b";
+        assert_eq!(is_swisstransfer_link(link), false);
+        let link = "https://www.swisstransfer.com/8b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b";
+        assert_eq!(is_swisstransfer_link(link), false);
     }
+
+    #[test]
+    fn test_path_exists() {
+        let path = "Cargo.toml";
+        assert_eq!(path_exists(path), true);
+        let path = "Cargo.toml2";
+        assert_eq!(path_exists(path), false);
+    }
+
+    #[test]
+    fn test_validate_number_download() {
+        let number = "250";
+        assert_eq!(validate_number_download(number), Ok(number.to_string()));
+        let number = "251";
+        assert_eq!(
+            validate_number_download(number),
+            Err(String::from("Number of downloads must be between 1 and 250"))
+        );
+        let number = "0";
+        assert_eq!(
+            validate_number_download(number),
+            Err(String::from("Number of downloads must be between 1 and 250"))
+        );
+        let number = "a";
+        assert_eq!(validate_number_download(number), Err(String::from("Must be a valid number")));
+    }
+
+    #[test]
+    fn test_validate_duration() {
+        let duration = "30";
+        assert_eq!(validate_duration(duration), Ok(duration.to_string()));
+        let duration = "31";
+        assert_eq!(
+            validate_duration(duration),
+            Err(String::from("Duration must be 1, 7, 15 or 30"))
+        );
+        let duration = "0";
+        assert_eq!(
+            validate_duration(duration),
+            Err(String::from("Duration must be 1, 7, 15 or 30"))
+        );
+        let duration = "a";
+        assert_eq!(validate_duration(duration), Err(String::from("Must be a valid number")));
+    }
+  
 }

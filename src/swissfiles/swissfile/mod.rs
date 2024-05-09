@@ -72,8 +72,6 @@ impl LocalSwissfile {
         }
         Ok(())
 
-        // Send a final request to the uploadComplete endpoint
-        //let remote_swissfile = self.finalize_upload()?; THIS HAS TO BE DONE IN THE CONTAINER
     }
 
     fn build_chunked_upload_url(&self, chunk: &Chunk) -> String {
@@ -192,10 +190,20 @@ impl RemoteSwissfile {
         let file = std::fs::File::create(&out_path)?;
         let url = self.url.clone();
 
-        let easy2 = new_easy2_download(url, None, file)?;
+        let easy2 = new_easy2_download(url, None, file, self.size)?;
         easy2.perform()?;
 
-        Ok(())
+        match easy2.response_code()? {
+            500 => {
+                // Clean up the file as it is invalid anyway
+                std::fs::remove_file(&out_path)?;
+
+                // we are not sure but we can assume that this is the error x)
+                Err(SwishError::DownloadNumberExceeded)
+            },
+            _ => Ok(()),
+        }
+
     }
 }
 

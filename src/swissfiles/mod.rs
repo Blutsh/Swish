@@ -114,10 +114,9 @@ impl Swissfiles {
     }
 
     pub fn new_localfiles(
-        path: &str,
+        path: PathBuf,
         upload_parameter: &UploadParameters,
     ) -> Result<Self, SwishError> {
-        let path = PathBuf::from(path);
 
         //Wow that sucks
         let path_clone = path.clone();
@@ -163,7 +162,7 @@ impl Swissfiles {
         Ok(())
     }
 
-    pub fn upload(&self) -> Result<(), SwishError> {
+    pub fn upload(&self) -> Result<String, SwishError> {
         for file in &self.files {
             match file {
                 Swissfile::Local(local_swissfile) => {
@@ -177,8 +176,8 @@ impl Swissfiles {
             }
         }
 
-        println!("Here is your download link {}", self.finalize_upload()?);
-        Ok(())
+        let download_link = self.finalize_upload()?;
+        Ok(download_link)
     }
 
     fn finalize_upload(&self) -> Result<String, SwishError> {
@@ -243,7 +242,7 @@ fn get_container(
     "lang": upload_parameter.lang,
     "recaptcha": "nope",
     "files": files_string,
-    "recipientsEmails": "[]"
+    "recipientsEmails": "[]" // We might want to add this feature later seems pretty useless for my use case
         });
 
     let payload_string = serde_json::to_string(&payload).unwrap();

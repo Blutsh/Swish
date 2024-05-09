@@ -36,11 +36,6 @@ pub struct DataHandler {
     pub data: Vec<u8>,
 }
 
-impl DataHandler {
-    pub fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-}
 
 impl Handler for DataHandler {
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {

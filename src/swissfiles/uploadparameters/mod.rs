@@ -3,7 +3,7 @@ pub struct UploadParameters {
     pub author_email: String,
     pub password: String,
     pub message: String,
-    pub number_of_download: u64,
+    pub number_of_download: u16,
     pub lang: String,
     pub recipients_emails: Vec<String>,
 }

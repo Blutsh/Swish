@@ -1,3 +1,5 @@
+/// Man... told you this was a mess
+
 use curl::easy::Easy2;
 use std::fs::File;
 use std::sync::{Arc, Mutex};
@@ -56,9 +58,8 @@ pub fn new_easy2_download(
     url: String,
     custom_headers: Option<Vec<String>>,
     file: File,
+    file_size: u64,
 ) -> Result<Easy2<DownloadHandler<File>>, curl::Error> {
-    let file_metadata = file.metadata().unwrap();
-    let file_size = file_metadata.len();
 
     let progress_bar = ProgressBar::new(file_size as u64);
     progress_bar.set_style(ProgressStyle::default_bar()
