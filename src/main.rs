@@ -7,6 +7,8 @@ mod api;
 mod errors;
 mod swissfiles;
 use std::path::PathBuf;
+use log::LevelFilter;
+use simple_logger::SimpleLogger;
 use swissfiles::uploadparameters::UploadParameters;
 use swissfiles::Swissfiles;
 
@@ -35,14 +37,26 @@ struct Cli {
     /// Define the number of days the file(s) will be available for download
     #[arg(short, long, value_name = "30", value_parser = validate_duration)]
     duration: Option<String>,
+
+    /// Enable verbose mode
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 fn main() -> Result<(), SwishError> {
-    simple_logger::SimpleLogger::new()
-        .with_level(log::LevelFilter::Info)
-        .init()
-        .unwrap();
+
     let cli = Cli::parse();
+
+    // Initialize logger
+    let mut logger = SimpleLogger::new();
+    if cli.verbose {
+        logger = logger.with_level(LevelFilter::Debug);
+    } else {
+        logger = logger.with_level(LevelFilter::Info);
+    }
+    logger.init().unwrap();
+
+
     let arg = cli.file;
 
 
