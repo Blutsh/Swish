@@ -146,7 +146,19 @@ impl Swissfiles {
         })
     }
 
-    pub fn download(&self, custom_out_path: Option<&Path>) -> Result<(), SwishError> {
+    pub fn download(&self, custom_out_path: Option<&PathBuf>) -> Result<(), SwishError> {
+
+      // Create the directory if it doesn't exist or use the current directory
+        let out_path = match custom_out_path {
+            Some(path) => {
+                if !path.exists() {
+                    Some(std::fs::create_dir_all(path)?);
+                }
+                Some(path)
+            }
+            None => None,
+        };
+
         for file in &self.files {
             match file {
                 Swissfile::Local(_) => {
@@ -155,7 +167,7 @@ impl Swissfiles {
                 }
                 Swissfile::Remote(remote_swissfile) => {
                     // Call download method on RemoteSwissfile
-                    remote_swissfile.download(custom_out_path)?;
+                    remote_swissfile.download(out_path)?;
                 }
             }
         }
