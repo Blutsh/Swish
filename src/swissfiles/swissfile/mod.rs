@@ -7,7 +7,7 @@ use serde_json::json;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use std::{fmt, path::Path};
+use std::fmt;
 
 const SWISSTRANSFER_API: &str = "https://www.swisstransfer.com/api";
 const CHUNK_SIZE: usize = 52428800;

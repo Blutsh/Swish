@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 mod swissfile;

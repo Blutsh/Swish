@@ -24,6 +24,8 @@ Options:
   -m, --message <Hello World>  Define the message for the file(s) uploaded
   -n, --number-download <250>  Define the max number of downloads for the file(s) uploaded
   -d, --duration <30>          Define the number of days the file(s) will be available for download
+  -o, --output <output>        Define an output directory for the downloaded files
+  -v, --verbose                Enable verbose mode
   -h, --help                   Print help
   -V, --version                Print version
 ```
@@ -50,6 +52,12 @@ swish -p mypassword https://www.swisstransfer.com/d/188be047-5b8c-48bf-9c4a-e700
 This tool does not provide any encryption feature. :warning:
 
 I strongly recommend you to encrypt your file before uploading it to any cloud service :lock:
+
+## Known Issues
+
+### File Upload Limit
+
+When uploading many times the ***same*** file, it seems that infomaniaks servers flags you as suspicous traffic and you won't be able to upload for a while. It seems to be linked to your IP address, no extensive testing has been done. Use the debug mode to see the error message. :warning:
 
 ## Contributing
 
