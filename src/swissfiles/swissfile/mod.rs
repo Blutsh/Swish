@@ -6,6 +6,7 @@ use crate::{
 use serde_json::json;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::{fmt, path::Path};
 
 const SWISSTRANSFER_API: &str = "https://www.swisstransfer.com/api";
@@ -71,7 +72,6 @@ impl LocalSwissfile {
             easy2.perform()?;
         }
         Ok(())
-
     }
 
     fn build_chunked_upload_url(&self, chunk: &Chunk) -> String {
@@ -181,11 +181,14 @@ impl RemoteSwissfile {
         Ok(token)
     }
 
-    pub fn download(&self, custom_out_path: Option<&Path>) -> Result<(), SwishError> {
+    pub fn download(&self, custom_out_path: Option<&PathBuf>) -> Result<(), SwishError> {
         log::debug!("Downloading {} from {}", self.name, self.url.clone());
-        let out_path = custom_out_path
-            .unwrap_or_else(|| Path::new("."))
-            .join(&self.name);
+        // Dereference the PathBuf if it exists
+        let out_path = match custom_out_path {
+            Some(path) => path.join(&self.name),
+            None => PathBuf::from(".").join(&self.name),
+        };
+
         let out_path = out_path.to_str().unwrap();
         let file = std::fs::File::create(&out_path)?;
         let url = self.url.clone();
@@ -200,10 +203,9 @@ impl RemoteSwissfile {
 
                 // we are not sure but we can assume that this is the error x)
                 Err(SwishError::DownloadNumberExceeded)
-            },
+            }
             _ => Ok(()),
         }
-
     }
 }
 

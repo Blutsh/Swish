@@ -38,6 +38,10 @@ struct Cli {
     #[arg(short, long, value_name = "30", value_parser = validate_duration)]
     duration: Option<String>,
 
+    /// Define an output directory for the downloaded files
+    #[arg(short, long, value_name = "output")]
+    output: Option<String>,
+
     /// Enable verbose mode
     #[arg(short, long)]
     verbose: bool,
@@ -66,7 +70,7 @@ fn main() -> Result<(), SwishError> {
         let swissfiles = Swissfiles::new_remotefiles(&arg, cli.password.as_deref())?;
 
         //Download the files
-        swissfiles.download(None)?;
+        swissfiles.download(cli.output.map(PathBuf::from).as_ref())?;
 
         return Ok(());
     }
