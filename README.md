@@ -54,8 +54,7 @@ This tool does not provide any encryption feature. :warning:
 I strongly recommend you to encrypt your file before uploading it to any cloud service :lock:
 
 ## Known Issues
-
-### File Upload Limit
+***File Upload Limit***
 
 When uploading many times the ***same*** file, it seems that infomaniaks servers flags you as suspicous traffic and you won't be able to upload for a while. It seems to be linked to your IP address, no extensive testing has been done. Use the debug mode to see the error message. :warning:
 
@@ -70,6 +69,9 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 ## Contact
 
 You can contact me at compote.interroge.0i@icloud.com :email:
+
+## Donate
+I drank some during the project, it would be nice if you could &nbsp;&nbsp;<a href='https://ko-fi.com/Y8Y7ZK4DS' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=3' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 
 
