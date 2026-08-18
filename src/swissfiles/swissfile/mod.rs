@@ -127,7 +127,7 @@ impl LocalSwissfile {
             let mut list = curl::easy::List::new();
             list.append("User-Agent: swisstransfer-webext/1.0")?;
             list.append("Cookie: webext=1")?;
-            list.append("Referer: swissfer/1.0.2")?;
+            list.append("Referer: swissfer/2.0.0")?;
             list.append("Content-Type: application/octet-stream")?;
             easy.http_headers(list)?;
 
