@@ -15,7 +15,7 @@ use log;
 const DEFAULT_HEADERS: &[&str; 3] = &[
     "User-Agent: swisstransfer-webext/1.0",
     "Cookie: webext=1",
-    "Referer: swish/1.0.2",
+    "Referer: swissfer/1.0.2",
 ];
 
 fn new_easy2_data(

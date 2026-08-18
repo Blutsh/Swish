@@ -1,10 +1,10 @@
 > [!IMPORTANT]  
-> The **upload** functionnality is **not working anymore** as Infomaniak removed [their reCAPTCHA bypass](https://github.com/Blutsh/Swish/issues/8) :(
+> The **upload** functionnality is **not working anymore** as Infomaniak removed [their reCAPTCHA bypass](https://github.com/Blutsh/swissfer/issues/8) :(
 > 
 > Download feature is still working tho
 
 
-# Swish :rocket:
+# Swissfer :rocket:
 
 A Command Line Tool for [Infomaniak](https://www.swisstransfer.com/)'s SwissTransfer Service. :cloud:
 
@@ -13,14 +13,14 @@ This project is not affiliated with Infomaniak and is not an official tool. :war
 
 ## Installation
 
-All the binaries are available in the [releases](https://github.com/Blutsh/Swish/releases) section. :inbox_tray:
+All the binaries are available in the [releases](https://github.com/Blutsh/swissfer/releases) section. :inbox_tray:
 
 Download the binary for your platform and add it to your PATH. :arrow_down:
 
 ## Usage
 
 ```sh
-Usage: swish [OPTIONS] <FILE>
+Usage: swissfer [OPTIONS] <FILE>
 
 Arguments:
   <FILE>  could be a file or a folder or a link
@@ -40,19 +40,19 @@ Options:
 
 Upload a file :rocket::
 ```sh
- swish /tmo/super-file.pdf
+ swissfer /tmo/super-file.pdf
 ```
 Upload a file with a password :closed_lock_with_key:
 ```sh
-swish -p mypassword /tmo/super-file.pdf
+swissfer -p mypassword /tmo/super-file.pdf
 ```
 Download a file :arrow_down::
 ```sh
-swish https://www.swisstransfer.com/d/188be047-5b8c-48bf-9c4a-e70076c0e53c
+swissfer https://www.swisstransfer.com/d/188be047-5b8c-48bf-9c4a-e70076c0e53c
 ```
 Download a file with a password :closed_lock_with_key::
 ```sh
-swish -p mypassword https://www.swisstransfer.com/d/188be047-5b8c-48bf-9c4a-e70076c0e53c
+swissfer -p mypassword https://www.swisstransfer.com/d/188be047-5b8c-48bf-9c4a-e70076c0e53c
 ```
 
 This tool does not provide any encryption feature. :warning:
