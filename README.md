@@ -4,18 +4,26 @@
 > Download feature is still working tho
 
 
-# Swissfer :rocket:
+# Swissfer
 
-A Command Line Tool for [Infomaniak](https://www.swisstransfer.com/)'s SwissTransfer Service. :cloud:
+A Command Line Tool for [Infomaniak](https://www.swisstransfer.com/)'s SwissTransfer Service. 🇨🇭
 
-This project is not affiliated with Infomaniak and is not an official tool. :warning:
+This project is not affiliated with Infomaniak and is not an official tool !
 
 
 ## Installation
 
-All the binaries are available in the [releases](https://github.com/Blutsh/swissfer/releases) section. :inbox_tray:
+All the binaries are available in the [releases](https://github.com/Blutsh/swissfer/releases) section. 
 
-Download the binary for your platform and add it to your PATH. :arrow_down:
+Download the binary for your platform and add it to your PATH.
+
+###  AUR helper tool
+
+Install it by running
+```bash
+yay -S swissfer 
+```
+
 
 ## Usage
 
@@ -38,31 +46,30 @@ Options:
 
 ### Examples
 
-Upload a file :rocket::
+Upload a file 
 ```sh
  swissfer /tmo/super-file.pdf
 ```
-Upload a file with a password :closed_lock_with_key:
+Upload a file with a password 
 ```sh
 swissfer -p mypassword /tmo/super-file.pdf
 ```
-Download a file :arrow_down::
+Download a file 
 ```sh
 swissfer https://www.swisstransfer.com/d/188be047-5b8c-48bf-9c4a-e70076c0e53c
 ```
-Download a file with a password :closed_lock_with_key::
+Download a file with a password 
 ```sh
 swissfer -p mypassword https://www.swisstransfer.com/d/188be047-5b8c-48bf-9c4a-e70076c0e53c
 ```
-
-This tool does not provide any encryption feature. :warning:
-
-I strongly recommend you to encrypt your file before uploading it to any cloud service :lock:
+> [!IMPORTANT]  
+> This tool does not provide any encryption feature. 
+> I strongly recommend you to encrypt your file before uploading it to any cloud service 
 
 ## Known Issues
 ***File Upload Limit***
 
-When uploading many times the ***same*** file, it seems that infomaniaks servers flags you as suspicous traffic and you won't be able to upload for a while. It seems to be linked to your IP address, no extensive testing has been done. Use the debug mode to see the error message. :warning:
+When uploading many times the ***same*** file, it seems that infomaniaks servers flags you as suspicous traffic and you won't be able to upload for a while. It seems to be linked to your IP address, no extensive testing has been done. Use the debug mode to see the error message.
 
 ## Contributing
 
@@ -70,8 +77,7 @@ If a developer who truly has the skills and doesn't face the same skill issues a
 
 ## License
 
-This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) file for details. :page_facing_up:
-
+This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) file for details. 
 ## Contact
 
 You can contact me at compote.interroge.0i@icloud.com :email:
