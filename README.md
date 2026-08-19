@@ -17,13 +17,13 @@ All the binaries are available in the [releases](https://github.com/Blutsh/swiss
 
 Download the binary for your platform and add it to your PATH.
 
-###  AUR helper tool
+### Arch User Repository
 
-Install it by running
-```bash
-yay -S swissfer 
+Install with yay (or any other AUR helper tool):
+
 ```
-
+yay -S swissfer
+```
 
 ## Usage
 
