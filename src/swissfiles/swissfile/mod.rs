@@ -1,6 +1,9 @@
 use crate::api::chunks::{build_chunks_array, Chunk};
+use crate::swissfiles::{SWISSTRANSFER_API, XSRF_COOKIE};
 use crate::{
-    api::{new_easy2_download, post},
+    api::{
+        default_headers, new_easy2_download, patch, percent_decode, post, request, Method, Session,
+    },
     errors::SwishError,
 };
 use indicatif::{ProgressBar, ProgressStyle};
@@ -8,10 +11,9 @@ use serde_json::json;
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use std::sync::{Arc, Mutex};
 
-const SWISSTRANSFER_API: &str = "https://www.swisstransfer.com/api";
 const CHUNK_SIZE: usize = 52428800;
 
 pub enum Swissfile {
@@ -23,8 +25,7 @@ pub struct LocalSwissfile {
     pub path: std::path::PathBuf,
     pub name: String,
     pub size: u64,
-    pub upload_host: String,
-    pub container_uuid: String,
+    pub transfer_uuid: String,
     pub files_uuid: String,
     pub chunks: Vec<Chunk>,
 }
@@ -36,8 +37,7 @@ impl fmt::Display for LocalSwissfile {
 }
 
 impl LocalSwissfile {
-    pub fn new(path: std::path::PathBuf, container: &serde_json::Value, file_uuid: String) -> Self {
-        let path = path.clone();
+    pub fn new(path: std::path::PathBuf, transfer_uuid: &str, file_uuid: String) -> Self {
         let name = path
             .file_name()
             .unwrap_or_default()
@@ -45,43 +45,57 @@ impl LocalSwissfile {
             .to_string();
         let size = path.metadata().map(|m| m.len()).unwrap_or(0);
         let chunks = build_chunks_array(size as usize, CHUNK_SIZE);
-        let container_uuid = container["container"]["UUID"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let upload_host = container["uploadHost"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
 
         Self {
             path,
             name,
             size,
-            upload_host,
-            container_uuid,
+            transfer_uuid: transfer_uuid.to_string(),
             files_uuid: file_uuid,
             chunks,
         }
     }
 
-    // Add back the build_chunked_upload_url method
-    fn build_chunked_upload_url(&self, chunk: &Chunk) -> String {
-        format!(
-            "https://{}/api/uploadChunk/{}/{}/{}/{}",
-            self.upload_host,
-            self.container_uuid,
-            self.files_uuid,
-            chunk.index,
-            if chunk.index == self.chunks.len() - 1 {
-                "1"
-            } else {
-                "0"
-            }
-        )
+    /// Ask the API for a presigned storage URL to put one part into.
+    ///
+    /// A file that fits in a single chunk uses the file endpoint directly; anything
+    /// larger is an S3-style multipart upload, one presigned URL per part.
+    fn presign(&self, chunk: &Chunk, session: &Session) -> Result<String, SwishError> {
+        let url = if self.is_direct_upload() {
+            format!(
+                "{}/transfers/{}/files/{}",
+                SWISSTRANSFER_API, self.transfer_uuid, self.files_uuid
+            )
+        } else {
+            format!(
+                "{}/transfers/{}/files/{}/chunks/{}",
+                SWISSTRANSFER_API,
+                self.transfer_uuid,
+                self.files_uuid,
+                // The API numbers parts from one.
+                chunk.index + 1
+            )
+        };
+
+        let raw = post(&url, Vec::new(), Some(xsrf_headers(session)), Some(session))?;
+        let body: serde_json::Value = serde_json::from_slice(&raw)?;
+
+        body["data"]["url"]
+            .as_str()
+            .map(|url| url.to_string())
+            .ok_or_else(|| SwishError::InvalidJson {
+                json: format!(
+                    "No upload URL in response: {}",
+                    String::from_utf8_lossy(&raw)
+                ),
+            })
     }
 
-    pub fn upload(&self) -> Result<(), SwishError> {
+    fn is_direct_upload(&self) -> bool {
+        self.chunks.len() <= 1
+    }
+
+    pub fn upload(&self, session: &Session) -> Result<(), SwishError> {
         log::debug!("Uploading file: {} (UUID: {})", self.name, self.files_uuid);
 
         // Create a single progress bar for the entire file
@@ -93,81 +107,60 @@ impl LocalSwissfile {
         // Share this progress bar across all chunk uploads
         let progress = Arc::new(Mutex::new(progress_bar));
 
+        let mut etags = Vec::new();
+
         // We want to upload each chunk in sequence
-        for (i, chunk) in self.chunks.iter().enumerate() {
+        for chunk in &self.chunks {
             log::debug!(
                 "Uploading chunk {}/{} of file {}",
-                i + 1,
+                chunk.index + 1,
                 self.chunks.len(),
                 self.name
             );
 
-            // Open file and seek to chunk position
-            let mut file = File::open(&self.path)?;
-            file.seek(SeekFrom::Start(chunk.offset as u64))?;
-
-            // Create the upload URL for this chunk
-            let upload_url = self.build_chunked_upload_url(&chunk);
-            log::debug!("Chunk upload URL: {}", upload_url);
-
-            // Create a buffer for just this chunk
             let mut buffer = vec![0u8; chunk.size];
-            file.read_exact(&mut buffer)?;
-
-            // Create a curl easy object
-            let mut easy = curl::easy::Easy::new();
-            easy.url(&upload_url)?;
-            easy.upload(true)?;
-            easy.post(true)?;
-
-            // Important: Set the correct content length for this chunk
-            easy.post_field_size(chunk.size as u64)?;
-
-            // Setup the headers
-            let mut list = curl::easy::List::new();
-            list.append("User-Agent: swisstransfer-webext/1.0")?;
-            list.append("Cookie: webext=1")?;
-            list.append("Referer: swissfer/2.0.0")?;
-            list.append("Content-Type: application/octet-stream")?;
-            easy.http_headers(list)?;
-
-            // Write the data using the shared progress bar
-            {
-                let mut data = buffer.as_slice();
-                let progress_clone = Arc::clone(&progress);
-
-                let mut transfer = easy.transfer();
-                transfer.read_function(move |into| {
-                    let amount = std::cmp::min(into.len(), data.len());
-                    if amount == 0 {
-                        return Ok(0);
-                    }
-
-                    into[..amount].copy_from_slice(&data[..amount]);
-
-                    // Update the shared progress bar
-                    progress_clone.lock().unwrap().inc(amount as u64);
-
-                    data = &data[amount..];
-                    Ok(amount)
-                })?;
-                transfer.perform()?;
+            if chunk.size > 0 {
+                let mut file = File::open(&self.path)?;
+                file.seek(SeekFrom::Start(chunk.offset as u64))?;
+                file.read_exact(&mut buffer)?;
             }
 
-            // Check response
-            let response_code = easy.response_code()?;
-            if response_code >= 400 {
-                return Err(SwishError::InvalidResponse {
-                    response: format!(
-                        "Failed to upload chunk {}/{} of file {} with status code: {}",
-                        i + 1,
-                        self.chunks.len(),
-                        self.name,
-                        response_code
-                    ),
-                });
-            }
+            let target = self.presign(chunk, session)?;
+            let etag = put_bytes(&target, &buffer, Arc::clone(&progress)).map_err(|error| {
+                match error {
+                    SwishError::InvalidResponse { response } => SwishError::InvalidResponse {
+                        response: format!(
+                            "chunk {}/{} of {}: {}",
+                            chunk.index + 1,
+                            self.chunks.len(),
+                            self.name,
+                            response
+                        ),
+                    },
+                    other => other,
+                }
+            })?;
+
+            etags.push(json!({ "chunk_index": chunk.index + 1, "etag": etag }));
         }
+
+        // Tell the API the parts are in place so it can assemble them.
+        let complete_url = format!(
+            "{}/transfers/{}/files/{}",
+            SWISSTRANSFER_API, self.transfer_uuid, self.files_uuid
+        );
+        let body = if self.is_direct_upload() {
+            json!({})
+        } else {
+            json!({ "etags": etags })
+        };
+
+        patch(
+            &complete_url,
+            body.to_string().into_bytes(),
+            Some(xsrf_headers(session)),
+            Some(session),
+        )?;
 
         // Make sure the progress bar is marked as finished
         progress.lock().unwrap().finish();
@@ -176,122 +169,205 @@ impl LocalSwissfile {
     }
 }
 
+/// Headers the API expects on any state-changing call.
+fn xsrf_headers(session: &Session) -> Vec<String> {
+    let mut headers = vec!["X-Requested-With: XMLHttpRequest".to_string()];
+    if let Some(token) = session.cookie(XSRF_COOKIE) {
+        headers.push(format!("X-XSRF-TOKEN: {}", percent_decode(&token)));
+    }
+    headers
+}
+
+/// PUT one part straight to storage and return the ETag it answers with.
+///
+/// The URL is presigned, so it carries its own authorisation. Nothing from the
+/// SwissTransfer session belongs on a request to a different host.
+fn put_bytes(
+    url: &str,
+    data: &[u8],
+    progress: Arc<Mutex<ProgressBar>>,
+) -> Result<String, SwishError> {
+    let mut easy = curl::easy::Easy::new();
+    easy.url(url)?;
+    easy.upload(true)?;
+    easy.in_filesize(data.len() as u64)?;
+
+    let mut list = curl::easy::List::new();
+    for header in default_headers() {
+        list.append(&header)?;
+    }
+    // S3 rejects the Expect/continue handshake curl adds for larger bodies.
+    list.append("Expect:")?;
+    easy.http_headers(list)?;
+
+    let etag = Arc::new(Mutex::new(String::new()));
+
+    {
+        let mut remaining = data;
+        let etag_sink = Arc::clone(&etag);
+
+        let mut transfer = easy.transfer();
+        transfer.read_function(move |into| {
+            let amount = std::cmp::min(into.len(), remaining.len());
+            if amount == 0 {
+                return Ok(0);
+            }
+
+            into[..amount].copy_from_slice(&remaining[..amount]);
+            progress.lock().unwrap().inc(amount as u64);
+            remaining = &remaining[amount..];
+            Ok(amount)
+        })?;
+        transfer.header_function(move |line| {
+            let line = String::from_utf8_lossy(line);
+            if let Some((name, value)) = line.split_once(':') {
+                if name.eq_ignore_ascii_case("etag") {
+                    *etag_sink.lock().unwrap() = value.trim().trim_matches('"').to_string();
+                }
+            }
+            true
+        })?;
+        transfer.perform()?;
+    }
+
+    let status = easy.response_code()?;
+    if status >= 400 {
+        return Err(SwishError::InvalidResponse {
+            response: format!("storage returned {}", status),
+        });
+    }
+
+    let etag = etag.lock().unwrap().clone();
+    if etag.is_empty() {
+        return Err(SwishError::InvalidResponse {
+            response: "storage did not return an ETag for the uploaded part".to_string(),
+        });
+    }
+
+    Ok(etag)
+}
+
 pub struct RemoteSwissfile {
+    /// Path as the sender saw it. Carries forward slashes when the file sat in a folder.
     pub name: String,
     pub size: u64,
-    pub url: String,
-    pub created_date: String,
-    pub expired_date: String,
-    pub deleted_date: String,
-    pub download_counter: u64,
-    pub e_virus_scan: String,
-    pub mime_type: String,
+    pub mime_type: Option<String>,
     pub uuid: String,
-    pub download_base_url: String,
-    pub container_uuid: String,
-    pub password: Option<String>,
+    pub link_uuid: String,
 }
 
 impl fmt::Display for RemoteSwissfile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Name: {}, Size: {}, URL: {}, Created: {}, Expired: {}, Mime: {}",
-            self.name, self.size, self.url, self.created_date, self.expired_date, self.mime_type
+            "Name: {}, Size: {}, Mime: {}",
+            self.name,
+            self.size,
+            self.mime_type.as_deref().unwrap_or("unknown")
         )
     }
 }
 
 impl RemoteSwissfile {
-    pub fn new(
-        json: &serde_json::Value,
-        download_base_url: &str,
-        container_uuid: &str,
-        password: Option<&str>,
-    ) -> Self {
-        let container_uuid = container_uuid.to_string();
-        let uuid = json["UUID"].as_str().unwrap().to_string();
-
-        // If file is password protected, generate a download token and build the URL accordingly
-        let url = match password {
-            Some(ref password) => {
-                let token =
-                    RemoteSwissfile::generate_download_token(password, &container_uuid, &uuid)
-                        .unwrap();
-                let token: String =
-                    serde_json::from_str(token.as_str()).unwrap_or_else(|_| token.to_string());
-                format!("{}/{}?token={}", download_base_url, uuid, token)
-            }
-            None => format!(
-                "{}/{}",
-                download_base_url,
-                json["UUID"].as_str().unwrap().to_string()
-            ),
-        };
-
+    pub fn new(json: &serde_json::Value, link_uuid: &str) -> Self {
         Self {
-            name: json["fileName"].as_str().unwrap().to_string(),
-            size: json["fileSizeInBytes"].as_u64().unwrap(),
-            url,
-            created_date: json["createdDate"].as_str().unwrap().to_string(),
-            expired_date: json["expiredDate"].as_str().unwrap().to_string(),
-            deleted_date: "test".to_owned(), // json["deletedDate"].as_str().unwrap().to_string(),
-            download_counter: json["downloadCounter"].as_u64().unwrap(),
-            e_virus_scan: json["eVirus"].as_str().unwrap().to_string(),
-            mime_type: json["mimeType"].as_str().unwrap().to_string(),
-            uuid,
-            download_base_url: download_base_url.to_string(),
-            container_uuid,
-            password: password.map(|s| s.to_string()),
+            name: json["path"].as_str().unwrap_or("unnamed").to_string(),
+            size: json["size"].as_u64().unwrap_or(0),
+            mime_type: json["mime_type"].as_str().map(|s| s.to_string()),
+            uuid: json["id"].as_str().unwrap_or_default().to_string(),
+            link_uuid: link_uuid.to_string(),
         }
     }
 
-    fn generate_download_token(
-        password: &str,
-        container_uuid: &str,
-        file_uuid: &str,
-    ) -> Result<String, SwishError> {
-        log::debug!("Generating download token for file: {}", file_uuid);
-        let url = format!("{}/generateDownloadToken", SWISSTRANSFER_API);
-        let payload = json!({
-            "password": password,
-            "containerUUID": container_uuid,
-            "fileUUID": file_uuid,
-        });
+    /// Ask the API where this file actually lives.
+    ///
+    /// The answer is a presigned storage URL that expires after an hour, so it is
+    /// fetched at download time rather than cached when the file list is built.
+    fn resolve_url(&self, session: &Session) -> Result<String, SwishError> {
+        let url = format!(
+            "{}/links/{}/files/{}",
+            SWISSTRANSFER_API, self.link_uuid, self.uuid
+        );
 
-        let response = post(url.as_str(), payload.to_string().into_bytes(), None)?;
-        let token: String = String::from_utf8(response).unwrap();
+        let response = request(&url, Method::Get, None, None, None, Some(session))?;
 
-        log::debug!("Retrieved Token : {:?}", token);
+        if response.status == 403 {
+            // The transfer is locked and this session never unlocked it.
+            return Err(SwishError::PasswordRequired);
+        }
 
-        Ok(token)
+        let body: serde_json::Value = serde_json::from_str(&response.text())?;
+
+        if response.status != 200 || body["result"] != "success" {
+            return Err(SwishError::InvalidResponse {
+                response: format!("{} - {}", response.status, response.text()),
+            });
+        }
+
+        body["data"]["url"]
+            .as_str()
+            .map(|url| url.to_string())
+            .ok_or_else(|| SwishError::InvalidJson {
+                json: format!("No download URL in response: {}", response.text()),
+            })
     }
 
-    pub fn download(&self, custom_out_path: Option<&PathBuf>) -> Result<(), SwishError> {
-        log::debug!("Downloading {} from {}", self.name, self.url.clone());
-        // Dereference the PathBuf if it exists
-        let out_path = match custom_out_path {
-            Some(path) => path.join(&self.name),
-            None => PathBuf::from(".").join(&self.name),
-        };
+    /// Where this file should land, keeping any folder structure the sender used
+    /// while refusing to escape the output directory.
+    fn output_path(&self, custom_out_path: Option<&PathBuf>) -> PathBuf {
+        let root = custom_out_path.cloned().unwrap_or_else(|| PathBuf::from("."));
 
-        let out_path = out_path.to_str().unwrap();
+        let mut path = root;
+        let mut any_segment = false;
+
+        for component in PathBuf::from(self.name.replace('\\', "/")).components() {
+            if let Component::Normal(segment) = component {
+                path.push(segment);
+                any_segment = true;
+            }
+        }
+
+        if !any_segment {
+            path.push("unnamed");
+        }
+
+        path
+    }
+
+    pub fn download(
+        &self,
+        custom_out_path: Option<&PathBuf>,
+        session: &Session,
+    ) -> Result<(), SwishError> {
+        let url = self.resolve_url(session)?;
+        log::debug!("Downloading {} from {}", self.name, url);
+
+        let out_path = self.output_path(custom_out_path);
+
+        if let Some(parent) = out_path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
+        println!("Downloading {}", self.name);
+
         let file = std::fs::File::create(&out_path)?;
-        let url = self.url.clone();
 
         let easy2 = new_easy2_download(url, None, file, self.size)?;
         easy2.perform()?;
 
-        match easy2.response_code()? {
-            500 => {
-                // Clean up the file as it is invalid anyway
-                std::fs::remove_file(&out_path)?;
+        let status = easy2.response_code()?;
+        if status >= 400 {
+            // Clean up the file as it is invalid anyway
+            std::fs::remove_file(&out_path)?;
 
-                // we are not sure but we can assume that this is the error x)
-                Err(SwishError::DownloadNumberExceeded)
-            }
-            _ => Ok(()),
+            return Err(SwishError::InvalidResponse {
+                response: format!("storage returned {} for {}", status, self.name),
+            });
         }
+
+        Ok(())
     }
 }
 

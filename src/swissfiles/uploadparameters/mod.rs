@@ -1,6 +1,7 @@
 pub struct UploadParameters {
     pub duration: u64,
-    pub author_email: String,
+    /// Sender address. SwissTransfer requires one, and requires it confirmed.
+    pub author_email: Option<String>,
     pub password: String,
     pub message: String,
     pub number_of_download: u16,
@@ -12,11 +13,12 @@ impl Default for UploadParameters {
     fn default() -> Self {
         Self {
             duration: 30,
-            author_email: "".to_owned(),
+            author_email: None,
             password: "".to_owned(),
             message: "".to_owned(),
             number_of_download: 250,
-            lang: "en_GB".to_owned(),
+            // The API only accepts a bare language code, not a locale.
+            lang: "en".to_owned(),
             recipients_emails: Vec::new(),
         }
     }
