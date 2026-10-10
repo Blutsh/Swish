@@ -178,6 +178,29 @@ fn xsrf_headers(session: &Session) -> Vec<String> {
     headers
 }
 
+/// Read the ETag out of one response header line.
+///
+/// Storage returns it quoted, like `ETag: "abc123"`. The API checks that
+/// exact form, so the quotes belong to the value and must survive. A bare
+/// ETag is re-quoted here, so the caller stays correct either way.
+fn parse_etag(line: &str) -> Option<String> {
+    let (name, value) = line.split_once(':')?;
+    if !name.eq_ignore_ascii_case("etag") {
+        return None;
+    }
+
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    Some(if value.starts_with('"') {
+        value.to_string()
+    } else {
+        format!("\"{}\"", value.trim_matches('"'))
+    })
+}
+
 /// PUT one part straight to storage and return the ETag it answers with.
 ///
 /// The URL is presigned, so it carries its own authorisation. Nothing from the
@@ -219,11 +242,8 @@ fn put_bytes(
             Ok(amount)
         })?;
         transfer.header_function(move |line| {
-            let line = String::from_utf8_lossy(line);
-            if let Some((name, value)) = line.split_once(':') {
-                if name.eq_ignore_ascii_case("etag") {
-                    *etag_sink.lock().unwrap() = value.trim().trim_matches('"').to_string();
-                }
+            if let Some(etag) = parse_etag(&String::from_utf8_lossy(line)) {
+                *etag_sink.lock().unwrap() = etag;
             }
             true
         })?;
@@ -377,5 +397,29 @@ impl fmt::Display for Swissfile {
             Swissfile::Local(local_swissfile) => write!(f, "{}", local_swissfile),
             Swissfile::Remote(remote_swissfile) => write!(f, "{}", remote_swissfile),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_etag;
+
+    const HEX: &str = "d8f2a1b3c4d5e6f708192a3b4c5d6e7f";
+
+    #[test]
+    fn keeps_a_quoted_etag() {
+        let want = format!("\"{}\"", HEX);
+        assert_eq!(parse_etag(&format!("ETag: \"{}\"\r\n", HEX)), Some(want));
+    }
+
+    #[test]
+    fn requotes_a_bare_etag() {
+        let want = format!("\"{}\"", HEX);
+        assert_eq!(parse_etag(&format!("etag: {}\r\n", HEX)), Some(want));
+    }
+
+    #[test]
+    fn ignores_other_headers() {
+        assert_eq!(parse_etag("Content-Type: application/zip\r\n"), None);
     }
 }
